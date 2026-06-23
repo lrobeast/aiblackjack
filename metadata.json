@@ -1,0 +1,6 @@
+{
+  "name": "Blackjack Multijoueur",
+  "description": "Application de blackjack en ligne multijoueur avec système de compte et de mise.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
