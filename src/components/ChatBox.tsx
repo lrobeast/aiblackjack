@@ -11,7 +11,7 @@ interface ChatBoxProps {
 
 export default function ChatBox({ messages, userId, onSendMessage }: ChatBoxProps) {
   const [text, setText] = useState("");
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,7 +22,9 @@ export default function ChatBox({ messages, userId, onSendMessage }: ChatBoxProp
   };
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
   }, [messages]);
 
   return (
@@ -36,7 +38,7 @@ export default function ChatBox({ messages, userId, onSendMessage }: ChatBoxProp
       </div>
 
       {/* Messages list */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
+      <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
         {messages.map((msg) => {
           const isMe = msg.userId === userId;
           const isSystem = msg.userId === "system";
@@ -69,7 +71,6 @@ export default function ChatBox({ messages, userId, onSendMessage }: ChatBoxProp
             </div>
           );
         })}
-        <div ref={chatEndRef} />
       </div>
 
       {/* Input form */}

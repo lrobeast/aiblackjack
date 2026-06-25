@@ -33,7 +33,7 @@ export default function GameTable({
   const [betAmount, setBetAmount] = useState<number>(table?.minBet || 10);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [showLogs, setShowLogs] = useState<boolean>(true);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
 
   // Find user's seat if any
   const mySeat = table?.seats ? table.seats.find((s) => s.userId === userId) : undefined;
@@ -77,9 +77,11 @@ export default function GameTable({
     prevTableStatus.current = table?.status || "";
   }, [table, soundEnabled, mySeat]);
 
-  // Scroll game logs to bottom
+  // Scroll game logs to bottom within its container to prevent page jumping
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (logsContainerRef.current) {
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+    }
   }, [table.gameLogs]);
 
   const handleChipClick = (val: number) => {
@@ -522,14 +524,13 @@ export default function GameTable({
                 <span className="text-[10px] font-semibold text-slate-300 tracking-wide uppercase">Croupier Journal</span>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5 scrollbar-thin">
+              <div ref={logsContainerRef} className="flex-1 overflow-y-auto p-2.5 space-y-1.5 scrollbar-thin">
                 {table.gameLogs.map((log, idx) => (
                   <div key={`log-${idx}`} className="text-[10px] text-slate-400 leading-relaxed font-mono">
                     <span className="text-emerald-500 select-none mr-1">&gt;</span>
                     {log}
                   </div>
                 ))}
-                <div ref={logsEndRef} />
               </div>
             </div>
 
@@ -538,41 +539,7 @@ export default function GameTable({
           </div>
         </div>
 
-        {/* Bottom Actions Bar */}
-        <div id="bottom-navigation-bar" className="mt-6 flex flex-col sm:flex-row justify-between items-center gap-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-4 shadow-2xl">
-          <div className="text-center sm:text-left">
-            <span className="text-xs text-slate-400 font-medium font-mono">Options de sortie</span>
-            <p className="text-[10px] text-slate-500 mt-0.5">Quittez la table ou fermez votre session en toute sécurité</p>
-          </div>
-          
-          <div className="flex flex-wrap justify-center items-center gap-3">
-            <button
-              id="btn-leave-table-bottom"
-              onClick={() => {
-                playSound("click");
-                onLeaveTable();
-              }}
-              className="flex items-center gap-2 text-xs font-bold text-red-300 hover:text-white transition duration-150 py-2 px-4 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-500/20 hover:border-red-500/40 cursor-pointer shadow-md"
-              title="Quitter cette table pour revenir à l'accueil du choix des tables"
-            >
-              <Home className="w-4 h-4 text-red-400" />
-              Quitter la Table (Accueil)
-            </button>
 
-            <button
-              id="btn-logout-bottom"
-              onClick={() => {
-                playSound("click");
-                onLogout();
-              }}
-              className="flex items-center gap-2 text-xs font-bold text-slate-300 hover:text-white transition duration-150 py-2 px-4 rounded-xl bg-slate-950/40 hover:bg-slate-900/60 border border-slate-500/20 hover:border-slate-500/40 cursor-pointer shadow-md"
-              title="Se déconnecter et revenir à l'écran de connexion"
-            >
-              <LogOut className="w-4 h-4 text-slate-400" />
-              Se Déconnecter
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );
