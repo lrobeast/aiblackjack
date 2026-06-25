@@ -3,17 +3,19 @@ import { TableState, UserProfile, PlayerSeat, Card } from "../types";
 import { playSound } from "./AudioController";
 import CardComponent from "./CardComponent";
 import ChatBox from "./ChatBox";
-import { ArrowLeft, Coins, Clock, Volume2, VolumeX, MessageSquare, ClipboardList, RefreshCw, UserPlus } from "lucide-react";
+import { ArrowLeft, Coins, Clock, Volume2, VolumeX, MessageSquare, ClipboardList, RefreshCw, UserPlus, LogOut, UserMinus, Home } from "lucide-react";
 
 interface GameTableProps {
   table: TableState;
   userId: string;
   user: UserProfile;
   onLeaveTable: () => void;
+  onLeaveSeat: () => void;
   onJoinSeat: (seatIndex: number) => void;
   onPlaceBet: (amount: number) => void;
   onSendAction: (action: "hit" | "stand" | "double") => void;
   onSendMessage: (text: string) => void;
+  onLogout: () => void;
 }
 
 export default function GameTable({
@@ -21,19 +23,21 @@ export default function GameTable({
   userId,
   user,
   onLeaveTable,
+  onLeaveSeat,
   onJoinSeat,
   onPlaceBet,
   onSendAction,
   onSendMessage,
+  onLogout,
 }: GameTableProps) {
-  const [betAmount, setBetAmount] = useState<number>(table.minBet);
+  const [betAmount, setBetAmount] = useState<number>(table?.minBet || 10);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [showLogs, setShowLogs] = useState<boolean>(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Find user's seat if any
-  const mySeat = table.seats.find((s) => s.userId === userId);
-  const isMyTurn = table.activeSeatIndex !== null && table.seats[table.activeSeatIndex]?.userId === userId;
+  const mySeat = table?.seats ? table.seats.find((s) => s.userId === userId) : undefined;
+  const isMyTurn = table?.activeSeatIndex !== null && table?.activeSeatIndex !== undefined && table?.seats && table.seats[table.activeSeatIndex]?.userId === userId;
 
   // Track cards to trigger sound effects
   const prevDealerCardsCount = useRef<number>(0);
@@ -44,22 +48,24 @@ export default function GameTable({
     if (!soundEnabled) return;
 
     // 1. Dealer card dealt sound
-    if (table.dealerHand.length > prevDealerCardsCount.current) {
+    if (table?.dealerHand && table.dealerHand.length > prevDealerCardsCount.current) {
       playSound("card");
     }
-    prevDealerCardsCount.current = table.dealerHand.length;
+    prevDealerCardsCount.current = table?.dealerHand?.length || 0;
 
     // 2. Player card dealt sound
-    table.seats.forEach((seat, idx) => {
-      const prevCount = prevPlayerCardsCount.current[idx] || 0;
-      if (seat.hand.length > prevCount) {
-        playSound("card");
-      }
-      prevPlayerCardsCount.current[idx] = seat.hand.length;
-    });
+    if (table?.seats) {
+      table.seats.forEach((seat, idx) => {
+        const prevCount = prevPlayerCardsCount.current[idx] || 0;
+        if (seat.hand && seat.hand.length > prevCount) {
+          playSound("card");
+        }
+        prevPlayerCardsCount.current[idx] = seat.hand?.length || 0;
+      });
+    }
 
     // 3. Round payout sounds (transitions to round-over)
-    if (table.status === "round-over" && prevTableStatus.current !== "round-over") {
+    if (table?.status === "round-over" && prevTableStatus.current !== "round-over") {
       if (mySeat && mySeat.bet > 0) {
         if (mySeat.payout > 0) {
           playSound("win");
@@ -68,7 +74,7 @@ export default function GameTable({
         }
       }
     }
-    prevTableStatus.current = table.status;
+    prevTableStatus.current = table?.status || "";
   }, [table, soundEnabled, mySeat]);
 
   // Scroll game logs to bottom
@@ -115,8 +121,20 @@ export default function GameTable({
     return total;
   };
 
-  // Pre-defined chip increments
-  const chips = [5, 10, 25, 100, 500];
+  // Dynamic chip values based on table limits
+  const chips = (() => {
+    const maxB = table?.maxBet || 200;
+    if (maxB === 200) {
+      return [10, 25, 50, 100, 200];
+    }
+    if (maxB === 1000) {
+      return [50, 100, 250, 500, 1000];
+    }
+    if (maxB === 5000) {
+      return [200, 500, 1000, 2500, 5000];
+    }
+    return [5, 10, 25, 100, 500];
+  })();
 
   return (
     <div id="game-table-container" className="relative min-h-screen bg-[#020617] text-slate-100 py-4 sm:py-6 px-2 lg:px-4 overflow-hidden font-sans">
@@ -128,16 +146,44 @@ export default function GameTable({
       <div className="max-w-7xl mx-auto relative z-10">
         {/* Top Navbar */}
         <div className="flex justify-between items-center bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-4 shadow-2xl mb-4 gap-4">
-          <button
-            onClick={() => {
-              playSound("click");
-              onLeaveTable();
-            }}
-            className="flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-slate-100 transition duration-150 py-1.5 px-3 rounded-lg border border-white/10 hover:border-white/20 cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Retour au Salon
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                playSound("click");
+                onLeaveTable();
+              }}
+              className="flex items-center gap-2 text-xs font-bold text-red-300 hover:text-white transition duration-150 py-1.5 px-3 rounded-lg bg-red-950/40 hover:bg-red-900/60 border border-red-500/20 hover:border-red-500/40 cursor-pointer shadow-md"
+              title="Quitter cette table pour revenir à l'accueil du choix des tables"
+            >
+              <Home className="w-3.5 h-3.5 text-red-400" />
+              Quitter la Table (Accueil)
+            </button>
+
+            <button
+              onClick={() => {
+                playSound("click");
+                onLogout();
+              }}
+              className="flex items-center gap-2 text-xs font-bold text-slate-300 hover:text-white transition duration-150 py-1.5 px-3 rounded-lg bg-slate-950/40 hover:bg-slate-900/60 border border-slate-500/20 hover:border-slate-500/40 cursor-pointer shadow-md"
+              title="Se déconnecter et revenir à l'écran de connexion"
+            >
+              <LogOut className="w-3.5 h-3.5 text-slate-400" />
+              Se Déconnecter
+            </button>
+
+            {mySeat && (
+              <button
+                onClick={() => {
+                  playSound("click");
+                  onLeaveSeat();
+                }}
+                className="flex items-center gap-1.5 text-xs font-bold text-amber-300 hover:text-amber-200 transition duration-150 py-1.5 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 hover:border-amber-500/40 cursor-pointer"
+              >
+                <UserMinus className="w-3.5 h-3.5 text-amber-400" />
+                Se Lever (Libérer Siège)
+              </button>
+            )}
+          </div>
 
           <div className="flex items-center gap-3">
             <span className="text-sm font-extrabold text-slate-200 hidden md:inline uppercase tracking-wider">
@@ -361,16 +407,16 @@ export default function GameTable({
                         key={`chip-${chipVal}`}
                         disabled={chipVal > user.balance}
                         onClick={() => handleChipClick(chipVal)}
-                        className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full border-4 border-dashed border-white flex items-center justify-center font-bold font-mono text-xs shadow-md transform hover:-translate-y-1 transition duration-150 active:scale-90 cursor-pointer ${
-                          chipVal === 5
-                            ? "bg-red-600 text-white"
-                            : chipVal === 10
-                            ? "bg-blue-600 text-white"
-                            : chipVal === 25
-                            ? "bg-green-700 text-white"
-                            : chipVal === 100
-                            ? "bg-slate-800 text-emerald-400"
-                            : "bg-emerald-500 text-slate-950"
+                        className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full border-4 border-dashed flex items-center justify-center font-bold font-mono text-xs shadow-md transform hover:-translate-y-1 transition duration-150 active:scale-90 cursor-pointer ${
+                          chipVal === 5 ? "bg-red-600 text-white border-red-300" :
+                          chipVal === 10 ? "bg-blue-600 text-white border-blue-300" :
+                          chipVal === 25 ? "bg-green-700 text-white border-green-300" :
+                          chipVal === 50 ? "bg-purple-700 text-white border-purple-300" :
+                          chipVal === 100 ? "bg-slate-800 text-emerald-400 border-slate-600" :
+                          chipVal === 200 ? "bg-emerald-600 text-white border-emerald-300" :
+                          chipVal === 250 ? "bg-amber-700 text-white border-amber-400" :
+                          chipVal === 500 ? "bg-amber-500 text-slate-950 border-amber-300" :
+                          "bg-rose-700 text-white border-rose-300"
                         } ${chipVal > user.balance ? "opacity-30 cursor-not-allowed" : ""}`}
                       >
                         ${chipVal}
@@ -385,6 +431,16 @@ export default function GameTable({
                       className="flex-1 py-2 rounded-xl text-xs font-semibold border border-white/10 hover:border-white/20 hover:bg-white/5 text-slate-400 hover:text-slate-200 transition duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       Effacer
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        playSound("click");
+                        onLeaveSeat();
+                      }}
+                      className="flex-1 py-2 rounded-xl text-xs font-semibold border border-red-500/20 hover:border-red-500/40 bg-red-500/10 hover:bg-red-500/20 text-red-300 transition duration-150 active:scale-95 cursor-pointer shadow-md"
+                    >
+                      Se lever
                     </button>
 
                     <button
@@ -479,6 +535,42 @@ export default function GameTable({
 
             {/* Chat Box */}
             <ChatBox messages={table.chatMessages} userId={userId} onSendMessage={onSendMessage} />
+          </div>
+        </div>
+
+        {/* Bottom Actions Bar */}
+        <div id="bottom-navigation-bar" className="mt-6 flex flex-col sm:flex-row justify-between items-center gap-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl p-4 shadow-2xl">
+          <div className="text-center sm:text-left">
+            <span className="text-xs text-slate-400 font-medium font-mono">Options de sortie</span>
+            <p className="text-[10px] text-slate-500 mt-0.5">Quittez la table ou fermez votre session en toute sécurité</p>
+          </div>
+          
+          <div className="flex flex-wrap justify-center items-center gap-3">
+            <button
+              id="btn-leave-table-bottom"
+              onClick={() => {
+                playSound("click");
+                onLeaveTable();
+              }}
+              className="flex items-center gap-2 text-xs font-bold text-red-300 hover:text-white transition duration-150 py-2 px-4 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-500/20 hover:border-red-500/40 cursor-pointer shadow-md"
+              title="Quitter cette table pour revenir à l'accueil du choix des tables"
+            >
+              <Home className="w-4 h-4 text-red-400" />
+              Quitter la Table (Accueil)
+            </button>
+
+            <button
+              id="btn-logout-bottom"
+              onClick={() => {
+                playSound("click");
+                onLogout();
+              }}
+              className="flex items-center gap-2 text-xs font-bold text-slate-300 hover:text-white transition duration-150 py-2 px-4 rounded-xl bg-slate-950/40 hover:bg-slate-900/60 border border-slate-500/20 hover:border-slate-500/40 cursor-pointer shadow-md"
+              title="Se déconnecter et revenir à l'écran de connexion"
+            >
+              <LogOut className="w-4 h-4 text-slate-400" />
+              Se Déconnecter
+            </button>
           </div>
         </div>
       </div>

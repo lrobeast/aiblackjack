@@ -155,6 +155,11 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(400).json({ error: "Le nom d'utilisateur doit faire au moins 3 caractères." });
   }
 
+  // Enforce LUCAS with pin 1234
+  if (cleanedUsername.toUpperCase() === "LUCAS" && pin !== "1234") {
+    return res.status(401).json({ error: "Code PIN incorrect pour le compte administrateur LUCAS (requis: 1234)." });
+  }
+
   // Search user by username
   let foundUser: (UserProfile & { pin: string }) | null = null;
   for (const u of users.values()) {
@@ -190,6 +195,14 @@ app.get("/api/auth/me", (req, res) => {
     return res.status(401).json({ error: "Non authentifié." });
   }
   const u = users.get(userId)!;
+  if (u.forceLogout) {
+    u.forceLogout = false;
+    return res.status(401).json({ error: "FORCE_LOGOUT", forceLogout: true });
+  }
+  if (u.forceLobby) {
+    u.forceLobby = false;
+    return res.json({ id: u.id, username: u.username, balance: u.balance, forceLobby: true });
+  }
   return res.json({ id: u.id, username: u.username, balance: u.balance });
 });
 
@@ -205,6 +218,158 @@ app.post("/api/auth/topup", (req, res) => {
   u.balance = 1000;
   users.set(userId, u);
   return res.json({ id: u.id, username: u.username, balance: u.balance });
+});
+
+// Admin endpoints
+app.post("/api/admin/verify", (req, res) => {
+  const userId = getUserIdFromReq(req);
+  if (!userId || !users.has(userId)) {
+    return res.status(401).json({ error: "Non authentifié." });
+  }
+  const u = users.get(userId)!;
+  if (u.username.toUpperCase() !== "LUCAS") {
+    return res.status(403).json({ error: "Accès refusé. Réservé à LUCAS." });
+  }
+
+  const { code } = req.body;
+  if (code === "roti") {
+    return res.json({ success: true });
+  }
+  return res.status(400).json({ error: "Code incorrect." });
+});
+
+app.get("/api/admin/state", (req, res) => {
+  const userId = getUserIdFromReq(req);
+  if (!userId || !users.has(userId)) {
+    return res.status(401).json({ error: "Non authentifié." });
+  }
+  const u = users.get(userId)!;
+  if (u.username.toUpperCase() !== "LUCAS") {
+    return res.status(403).json({ error: "Accès refusé. Réservé à LUCAS." });
+  }
+
+  const adminCode = req.headers["x-admin-code"];
+  if (adminCode !== "roti") {
+    return res.status(403).json({ error: "Accès refusé." });
+  }
+
+  const allUsers = Array.from(users.values()).map((u) => ({
+    id: u.id,
+    username: u.username,
+    balance: u.balance,
+    forceLobby: u.forceLobby,
+    forceLogout: u.forceLogout,
+  }));
+
+  const allTables = Array.from(tables.values()).map((t) => ({
+    id: t.id,
+    name: t.name,
+    status: t.status,
+    seats: t.seats.map((s) => ({
+      seatIndex: s.seatIndex,
+      userId: s.userId,
+      username: s.username,
+      bet: s.bet,
+      status: s.status,
+    })),
+  }));
+
+  return res.json({ users: allUsers, tables: allTables });
+});
+
+app.post("/api/admin/action", (req, res) => {
+  const userId = getUserIdFromReq(req);
+  if (!userId || !users.has(userId)) {
+    return res.status(401).json({ error: "Non authentifié." });
+  }
+  const caller = users.get(userId)!;
+  if (caller.username.toUpperCase() !== "LUCAS") {
+    return res.status(403).json({ error: "Accès refusé. Réservé à LUCAS." });
+  }
+
+  const adminCode = req.headers["x-admin-code"];
+  if (adminCode !== "roti") {
+    return res.status(403).json({ error: "Accès refusé." });
+  }
+
+  const { action, targetUserId, amount } = req.body;
+  const u = users.get(targetUserId);
+  if (!u) {
+    return res.status(404).json({ error: "Utilisateur introuvable." });
+  }
+
+  if (action === "reset-balance") {
+    const newBalance = typeof amount === "number" ? amount : 1000;
+    u.balance = newBalance;
+    users.set(targetUserId, u);
+
+    // Notify tables about balance reset
+    for (const table of tables.values()) {
+      const isHere = table.seats.some((s) => s.userId === targetUserId);
+      if (isHere) {
+        table.gameLogs.push(`[ADMIN] Solde de ${u.username} réinitialisé à $${newBalance}.`);
+      }
+    }
+
+    return res.json({ success: true, message: `Solde réinitialisé à $${newBalance} pour ${u.username}.` });
+  }
+
+  if (action === "kick" || action === "logout") {
+    // Find if user is seated at a table
+    for (const table of tables.values()) {
+      const seatIndex = table.seats.findIndex((s) => s.userId === targetUserId);
+      if (seatIndex !== -1) {
+        const seat = table.seats[seatIndex];
+        const name = seat.username;
+
+        // Refund bet if appropriate
+        if (table.status === "waiting" || table.status === "betting" || table.status === "round-over") {
+          if (seat.bet > 0) {
+            u.balance += seat.bet;
+            table.gameLogs.push(`${name} a récupéré sa mise de $${seat.bet} en étant exclu.`);
+          }
+        }
+
+        const wasActiveTurn = table.status === "player-turns" && table.activeSeatIndex === seatIndex;
+
+        // Clear seat
+        seat.userId = null;
+        seat.username = null;
+        seat.bet = 0;
+        seat.hand = [];
+        seat.status = "waiting";
+        seat.payout = 0;
+        seat.message = "";
+
+        table.gameLogs.push(`[ADMIN] ${name} a été exclu de la table.`);
+
+        if (wasActiveTurn) {
+          table.gameLogs.push(`Le tour passe car ${name} a été exclu.`);
+          advanceTurn(table);
+        }
+
+        // Reset empty tables
+        const playersLeft = table.seats.some((s) => s.userId !== null);
+        if (!playersLeft) {
+          table.status = "waiting";
+          table.countdown = 0;
+          table.activeSeatIndex = null;
+          table.dealerHand = [];
+        }
+      }
+    }
+
+    if (action === "kick") {
+      u.forceLobby = true;
+    } else if (action === "logout") {
+      u.forceLogout = true;
+    }
+
+    users.set(targetUserId, u);
+    return res.json({ success: true, message: `Action '${action}' effectuée avec succès pour ${u.username}.` });
+  }
+
+  return res.status(400).json({ error: "Action non prise en charge." });
 });
 
 // Table endpoints
@@ -229,7 +394,27 @@ app.get("/api/tables/:tableId", (req, res) => {
   if (!table) {
     return res.status(404).json({ error: "Table introuvable." });
   }
-  return res.json(table);
+  const userId = getUserIdFromReq(req);
+  const u = userId ? users.get(userId) : null;
+  if (u) {
+    if (u.forceLogout) {
+      u.forceLogout = false;
+      return res.status(401).json({ error: "FORCE_LOGOUT", forceLogout: true });
+    }
+    if (u.forceLobby) {
+      u.forceLobby = false;
+      return res.json({
+        table,
+        user: { id: u.id, username: u.username, balance: u.balance, forceLobby: true },
+        forceLobby: true,
+      });
+    }
+    return res.json({
+      table,
+      user: { id: u.id, username: u.username, balance: u.balance }
+    });
+  }
+  return res.json({ table });
 });
 
 app.post("/api/tables/:tableId/join", (req, res) => {
@@ -292,10 +477,11 @@ app.post("/api/tables/:tableId/leave", (req, res) => {
     return res.status(404).json({ error: "Table introuvable." });
   }
 
-  const seat = table.seats.find((s) => s.userId === userId);
-  if (!seat) {
-    return res.status(400).json({ error: "Vous n'êtes pas sur cette table." });
+  const seatIndex = table.seats.findIndex((s) => s.userId === userId);
+  if (seatIndex === -1) {
+    return res.json(table);
   }
+  const seat = table.seats[seatIndex];
 
   // Refund bet if in waiting/betting state
   if (table.status === "waiting" || table.status === "betting" || table.status === "round-over") {
@@ -308,6 +494,8 @@ app.post("/api/tables/:tableId/leave", (req, res) => {
   }
 
   const name = seat.username;
+  const wasActiveTurn = table.status === "player-turns" && table.activeSeatIndex === seatIndex;
+
   seat.userId = null;
   seat.username = null;
   seat.bet = 0;
@@ -317,6 +505,11 @@ app.post("/api/tables/:tableId/leave", (req, res) => {
   seat.message = "";
 
   table.gameLogs.push(`${name} a quitté la table.`);
+
+  if (wasActiveTurn) {
+    table.gameLogs.push(`Le tour passe car ${name} est parti.`);
+    advanceTurn(table);
+  }
 
   // If table is completely empty, reset it to waiting
   const playersLeft = table.seats.some((s) => s.userId !== null);

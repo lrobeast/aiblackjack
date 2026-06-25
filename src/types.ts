@@ -48,6 +48,8 @@ export interface UserProfile {
   id: string;
   username: string;
   balance: number;
+  forceLobby?: boolean;
+  forceLogout?: boolean;
 }
 
 export interface GameAuthResponse {

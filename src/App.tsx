@@ -4,7 +4,8 @@ import Login from "./components/Login";
 import TableSelection from "./components/TableSelection";
 import GameTable from "./components/GameTable";
 import { playSound } from "./components/AudioController";
-import { ShieldAlert, X } from "lucide-react";
+import { ShieldAlert, X, Shield } from "lucide-react";
+import AdminPanel from "./components/AdminPanel";
 
 const safeLocalStorage = {
   getItem(key: string): string | null {
@@ -41,6 +42,7 @@ export default function App() {
   const [activeTableState, setActiveTableState] = useState<TableState | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorNotification, setErrorNotification] = useState<string | null>(null);
+  const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
 
   // Helper to show errors gracefully without blocking alerts
   const showError = (msg: string) => {
@@ -67,6 +69,26 @@ export default function App() {
         data = text ? JSON.parse(text) : {};
       } catch (e) {
         data = {};
+      }
+
+      // Check if this is an admin forced action from response
+      const isForceLogout = data && (data.forceLogout || (data.user && data.user.forceLogout) || data.error === "FORCE_LOGOUT" || res.status === 401 && (data.error === "FORCE_LOGOUT" || data.forceLogout));
+      const isForceLobby = data && (data.forceLobby || (data.user && data.user.forceLobby));
+
+      if (isForceLogout) {
+        showError("Vous avez été exclu et déconnecté par l'administrateur.");
+        safeLocalStorage.removeItem("blackjack_token");
+        setToken(null);
+        setUser(null);
+        setActiveTableId(null);
+        setActiveTableState(null);
+        throw new Error("Déconnecté par l'administrateur.");
+      }
+
+      if (isForceLobby) {
+        showError("Vous avez été renvoyé à l'accueil par l'administrateur.");
+        setActiveTableId(null);
+        setActiveTableState(null);
       }
 
       if (!res.ok) {
@@ -126,7 +148,14 @@ export default function App() {
     const fetchTable = () => {
       apiFetch(`/api/tables/${activeTableId}`)
         .then((data) => {
-          setActiveTableState(data);
+          if (data && data.table && data.table.seats) {
+            setActiveTableState(data.table);
+            if (data.user) {
+              setUser(data.user);
+            }
+          } else if (data && data.seats) {
+            setActiveTableState(data);
+          }
         })
         .catch((err) => {
           console.warn("Error fetching active table details:", err);
@@ -155,11 +184,21 @@ export default function App() {
   };
 
   // Handle Logout
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (activeTableId) {
+      try {
+        await apiFetch(`/api/tables/${activeTableId}/leave`, {
+          method: "POST",
+        });
+      } catch (err) {
+        console.warn("Error leaving table during logout:", err);
+      }
+    }
     safeLocalStorage.removeItem("blackjack_token");
     setToken(null);
     setUser(null);
     setActiveTableId(null);
+    setActiveTableState(null);
   };
 
   // Handle Joining a Seat
@@ -189,6 +228,20 @@ export default function App() {
       console.warn("Error leaving table:", err);
       setActiveTableId(null);
       setActiveTableState(null);
+    }
+  };
+
+  // Handle Leaving Seat (Standing Up) but staying at the table as spectator
+  const handleLeaveSeat = async () => {
+    if (!activeTableId) return;
+    try {
+      const updatedTable = await apiFetch(`/api/tables/${activeTableId}/leave`, {
+        method: "POST",
+      });
+      setActiveTableState(updatedTable);
+    } catch (err: any) {
+      console.warn("Error leaving seat:", err);
+      showError(err.message);
     }
   };
 
@@ -304,10 +357,12 @@ export default function App() {
           userId={user.id}
           user={user}
           onLeaveTable={handleLeaveTable}
+          onLeaveSeat={handleLeaveSeat}
           onJoinSeat={handleJoinSeat}
           onPlaceBet={handlePlaceBet}
           onSendAction={handleSendAction}
           onSendMessage={handleSendMessage}
+          onLogout={handleLogout}
         />
       ) : (
         <TableSelection
@@ -318,6 +373,29 @@ export default function App() {
           onLogout={handleLogout}
         />
       )}
+
+      {/* Floating Administrator Trigger */}
+      {user && user.username.toUpperCase() === "LUCAS" && (
+        <button
+          id="btn-admin-floating"
+          onClick={() => {
+            playSound("click");
+            setIsAdminOpen(true);
+          }}
+          className="fixed bottom-6 left-6 z-40 p-3 rounded-full bg-slate-900/95 border border-red-500/30 hover:border-red-500/60 hover:bg-slate-800 text-red-400 hover:text-red-300 shadow-2xl flex items-center gap-2 group transition duration-150 cursor-pointer"
+          title="Ouvrir le Panneau d'Administration"
+        >
+          <Shield className="w-5 h-5 animate-pulse group-hover:scale-110 transition duration-150" />
+          <span className="text-xs font-bold font-mono pr-1 max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300">ADMIN</span>
+        </button>
+      )}
+
+      {/* Admin Panel Modal Overlay */}
+      <AdminPanel
+        isOpen={isAdminOpen}
+        onClose={() => setIsAdminOpen(false)}
+        apiFetch={apiFetch}
+      />
     </div>
   );
 }
